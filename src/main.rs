@@ -13,6 +13,8 @@ fn main() {
     let mut buf = Vec::new();
     let mut in_verse:bool = false;
     let mut in_word:bool = false;
+    let mut between_word:bool = false;
+    let mut ignore:bool = false; // Ignore this block
     let mut start_verse:bool = false;
     let mut in_content:bool = false;
     let mut in_s:bool = false;
@@ -23,29 +25,49 @@ fn main() {
 
             Ok(Event::Start(e)) => {
                 match e.name().as_ref() {
-                    b"p" => {},
+                    b"p" => {
+                        // paragraph
+                        // no-op
+                    },
                     b"s" => {
                         in_s = true;
+                        ignore = true;
                     },
                     b"w" => {
                         in_word = true;
+                        between_word = false;
+                        // print!("<w>");
                     },
                     b"v" => {
                         in_verse = true;
                     },
                     b"ve" => { in_verse = false; println!("***ve***");  },
+                    b"f" => { ignore = true; },
+                    b"x" => { ignore = true; },
                     _ => (),
                 }
             }
             Ok(Event::Text(e)) => {
-                if in_content {
-                    if in_word && !in_s {
-                        if start_verse { print!(" "); } // TODO: Fix this hack - figure out spacing
-                        print!("{}", e.unescape().unwrap().into_owned());
-                    } else {
-                        if !in_s { // Don't print section headings
-                            print!("{}", str::from_utf8(e.as_ref()).unwrap());
+                if in_content && !ignore {
+                    if !in_s && in_verse {
+                        if in_word {
+                            if start_verse { print!(" "); } // TODO: Fix this hack - figure out spacing
+                            print!(">{}", e.unescape().unwrap().into_owned());
+                        } else { // Don't print section headings
+                            print!("+{}", str::from_utf8(e.as_ref()).unwrap());
                         }
+                    } else {
+                        // if between_word {
+                            print!("{} ", e.unescape().unwrap().into_owned());
+                        // } else {
+                            // print!("<!BW>");
+                        // }
+                    }
+                } else {
+                    if !ignore {
+                        print!("^{:?}", e.unescape().unwrap().into_owned());
+                    // } else {
+                    //     print!("<ignore: {:?}/>", e.unescape().unwrap().into_owned());
                     }
                 }
             },
@@ -53,11 +75,26 @@ fn main() {
                 match e.name().as_ref() {
                     b"w" => {
                         in_word = false;
+                        between_word = true;
+                        // print!("</w>");
                     },
                     b"s" => {
                         in_s = false;
+                        ignore = false;
+                        // print!("&");
+                    },
+                    b"f" => {
+                        ignore = false;
+                    },
+                    b"s" => {
+                        ignore = false;
+                    },
+                    b"x" => {
+                        ignore = false;
                     },
                     _ => (),
+                        // print!("*</{:#?}>", str::from_utf8(e.name().as_ref()).unwrap());
+                    // },
                 }
             },
             Ok(Event::CData(e)) => {
@@ -67,7 +104,7 @@ fn main() {
                 if e.name() == quick_xml::name::QName(b"ve") {
                     in_verse = false;
                     println!("");
-                } else {
+                } else { // Not verse-end
                     let mut attrvec = e.attributes().map(|a| a).collect::<Vec<_>>();
                     for a in attrvec.iter_mut() {
                         let k = str::from_utf8(a.as_ref().unwrap().key.as_ref()).unwrap();
@@ -79,6 +116,7 @@ fn main() {
                             in_content = true;
                         }
                     }
+                    // print!("@{:?}", e.name());
                 }
             }
             Ok(Event::Eof) => break,

@@ -5,3 +5,4 @@ xml/*.xml
 /**/*.log
 /**/*.txt
 /**/*.db
+.DS_Store

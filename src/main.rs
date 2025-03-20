@@ -1,129 +1,275 @@
-// usfx_to_tsv: Convert USFX XML files to TSV
-// Starting point: Reader example at https://crates.io/crates/quick-xml
-// Find some USFX files at https://ebible.org/ - e.g. https://ebible.org/find/show.php?id=engnet
+//! USFX to TSV Converter
+//! 
+//! This crate provides functionality to convert USFX (Unified Scripture Format XML) files to TSV format.
+//! USFX files can be found at https://ebible.org/ (e.g., https://ebible.org/find/show.php?id=engnet)
+//! 
+//! # Example
+//! ```no_run
+//! use usfx_to_tsv::UsfxParser;
+//! use std::fs::File;
+//! 
+//! let config = UsfxConfig::default();
+//! let output = Box::new(File::create("output.tsv").unwrap());
+//! let mut parser = UsfxParser::new("input.xml", output, config).unwrap();
+//! parser.parse().unwrap();
+//! ```
 
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
+use std::io::BufReader;
 use std::str;
+use std::path::Path;
+use std::io::Write;
 
-fn main() {
-    let mut reader = Reader::from_file("./xml/source.xml").expect("Couldn't find or open file");
-    reader.config_mut().trim_text(true);
+/// Configuration options for the USFX parser
+#[derive(Debug, Clone)]
+pub struct UsfxConfig {
+    /// Buffer size for XML parsing (default: 1024)
+    pub buffer_size: usize,
+    /// Whether to trim whitespace from text (default: true)
+    pub trim_text: bool,
+    /// Whether to include debug output (default: false)
+    pub debug_output: bool,
+}
 
-    let mut buf = Vec::new();
-    let mut in_verse:bool = false;
-    let mut in_word:bool = false;
-    let mut between_word:bool = false;
-    let mut ignore:bool = false; // Ignore this block
-    let mut start_verse:bool = false;
-    let mut in_content:bool = false;
-    let mut in_s:bool = false;
-
-    loop {
-        match reader.read_event_into(&mut buf) {
-            Err(e) => panic!("Error at position {}: {:?}", reader.error_position(), e),
-
-            Ok(Event::Start(e)) => {
-                match e.name().as_ref() {
-                    b"p" => {
-                        // paragraph
-                        // no-op
-                    },
-                    b"s" => {
-                        in_s = true;
-                        ignore = true;
-                    },
-                    b"w" => {
-                        in_word = true;
-                        between_word = false;
-                        // print!("<w>");
-                    },
-                    b"v" => {
-                        in_verse = true;
-                    },
-                    b"ve" => { in_verse = false; println!("***ve***");  },
-                    b"f" => { ignore = true; },
-                    b"x" => { ignore = true; },
-                    _ => (),
-                }
-            }
-            Ok(Event::Text(e)) => {
-                if in_content && !ignore {
-                    if !in_s && in_verse {
-                        if in_word {
-                            if start_verse { print!(" "); } // TODO: Fix this hack - figure out spacing
-                            print!(">{}", e.unescape().unwrap().into_owned());
-                        } else { // Don't print section headings
-                            print!("+{}", str::from_utf8(e.as_ref()).unwrap());
-                        }
-                    } else {
-                        // if between_word {
-                            print!("{} ", e.unescape().unwrap().into_owned());
-                        // } else {
-                            // print!("<!BW>");
-                        // }
-                    }
-                } else {
-                    if !ignore {
-                        print!("^{:?}", e.unescape().unwrap().into_owned());
-                    // } else {
-                    //     print!("<ignore: {:?}/>", e.unescape().unwrap().into_owned());
-                    }
-                }
-            },
-            Ok(Event::End(e)) => {
-                match e.name().as_ref() {
-                    b"w" => {
-                        in_word = false;
-                        between_word = true;
-                        // print!("</w>");
-                    },
-                    b"s" => {
-                        in_s = false;
-                        ignore = false;
-                        // print!("&");
-                    },
-                    b"f" => {
-                        ignore = false;
-                    },
-                    b"s" => {
-                        ignore = false;
-                    },
-                    b"x" => {
-                        ignore = false;
-                    },
-                    _ => (),
-                        // print!("*</{:#?}>", str::from_utf8(e.name().as_ref()).unwrap());
-                    // },
-                }
-            },
-            Ok(Event::CData(e)) => {
-                println!("cdata:{:?}", e);
-            },
-            Ok(Event::Empty(e)) => {
-                if e.name() == quick_xml::name::QName(b"ve") {
-                    in_verse = false;
-                    println!("");
-                } else { // Not verse-end
-                    let mut attrvec = e.attributes().map(|a| a).collect::<Vec<_>>();
-                    for a in attrvec.iter_mut() {
-                        let k = str::from_utf8(a.as_ref().unwrap().key.as_ref()).unwrap();
-                        let v = str::from_utf8(&a.as_ref().unwrap().value.as_ref()).unwrap().trim();
-                        if k.eq("bcv") {
-                            let bcv_vec = v.split(".").collect::<Vec<_>>();
-                            print!("{:}\t{:}\t{:}\t", bcv_vec[0], bcv_vec[1], bcv_vec[2]);
-                            start_verse = true;
-                            in_content = true;
-                        }
-                    }
-                    // print!("@{:?}", e.name());
-                }
-            }
-            Ok(Event::Eof) => break,
-            // There are several other `Event`s we do not consider here
-            _ => (),
+impl Default for UsfxConfig {
+    fn default() -> Self {
+        Self {
+            buffer_size: 1024,
+            trim_text: true,
+            debug_output: false,
         }
-        // if we don't keep a borrow elsewhere, we can clear the buffer to keep memory usage low
-        buf.clear();
+    }
+}
+
+/// Builder for UsfxConfig
+#[derive(Debug, Default)]
+pub struct UsfxConfigBuilder {
+    config: UsfxConfig,
+}
+
+impl UsfxConfigBuilder {
+    /// Create a new builder with default settings
+    pub fn new() -> Self {
+        Self {
+            config: UsfxConfig::default(),
+        }
+    }
+
+    /// Set the buffer size
+    pub fn buffer_size(mut self, size: usize) -> Self {
+        self.config.buffer_size = size;
+        self
+    }
+
+    /// Set whether to trim text
+    pub fn trim_text(mut self, trim: bool) -> Self {
+        self.config.trim_text = trim;
+        self
+    }
+
+    /// Set whether to include debug output
+    pub fn debug_output(mut self, debug: bool) -> Self {
+        self.config.debug_output = debug;
+        self
+    }
+
+    /// Build the configuration
+    pub fn build(self) -> UsfxConfig {
+        self.config
+    }
+}
+
+#[derive(Debug)]
+pub enum ParserError {
+    FileError(std::io::Error),
+    XmlError(quick_xml::Error),
+    ParseError(String),
+}
+
+#[derive(Debug, PartialEq)]
+enum ParserState {
+    Initial,
+    InVerse,
+    InWord,
+    InSection,
+    InFootnote,
+    InCrossReference,
+    VerseEnd,
+}
+
+/// Main parser for USFX files
+pub struct UsfxParser {
+    reader: Reader<BufReader<std::fs::File>>,
+    state: ParserState,
+    buffer: Vec<u8>,
+    output: Box<dyn Write>,
+    config: UsfxConfig,
+}
+
+impl UsfxParser {
+    /// Create a new USFX parser
+    /// 
+    /// # Arguments
+    /// * `input_path` - Path to the input USFX file
+    /// * `output` - Writer for the output TSV
+    /// * `config` - Configuration options for the parser
+    /// 
+    /// # Returns
+    /// * `Result<Self, ParserError>` - The parser instance or an error
+    pub fn new<P: AsRef<Path>>(
+        input_path: P,
+        output: Box<dyn Write>,
+        config: UsfxConfig,
+    ) -> Result<Self, ParserError> {
+        let reader = Reader::from_file(input_path)
+            .map_err(|e| ParserError::FileError(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        
+        Ok(Self {
+            reader,
+            state: ParserState::Initial,
+            buffer: Vec::with_capacity(config.buffer_size),
+            output,
+            config,
+        })
+    }
+
+    /// Parse the USFX file and convert it to TSV format
+    /// 
+    /// # Returns
+    /// * `Result<(), ParserError>` - Success or error
+    pub fn parse(&mut self) -> Result<(), ParserError> {
+        let mut start_verse = false;
+        let mut in_content = false;
+
+        loop {
+            match self.reader.read_event_into(&mut self.buffer) {
+                Err(e) => return Err(ParserError::XmlError(e)),
+                
+                Ok(Event::Start(e)) => {
+                    match e.name().as_ref() {
+                        b"ve" => self.state = ParserState::VerseEnd,
+                        b"w" => self.state = ParserState::InWord,
+                        b"v" => self.state = ParserState::InVerse,
+                        b"s" => self.state = ParserState::InSection,
+                        b"f" => self.state = ParserState::InFootnote,
+                        b"x" => self.state = ParserState::InCrossReference,
+                        _ => (),
+                    }
+                },
+
+                Ok(Event::Text(e)) => {
+                    if in_content && self.state != ParserState::InFootnote && self.state != ParserState::InCrossReference {
+                        let text = e.unescape()
+                            .map_err(|e| ParserError::ParseError(format!("Failed to unescape text: {}", e)))?
+                            .into_owned();
+                        
+                        let text = if self.config.trim_text {
+                            text.trim()
+                        } else {
+                            &text
+                        };
+                        
+                        match self.state {
+                            ParserState::InVerse => {
+                                if start_verse {
+                                    write!(self.output, " ").map_err(|e| ParserError::ParseError(e.to_string()))?;
+                                }
+                                if self.state == ParserState::InWord {
+                                    write!(self.output, ">{}", text).map_err(|e| ParserError::ParseError(e.to_string()))?;
+                                } else {
+                                    match text {
+                                        "\n" => write!(self.output, "").map_err(|e| ParserError::ParseError(e.to_string()))?,
+                                        _ => write!(self.output, "{}", text).map_err(|e| ParserError::ParseError(e.to_string()))?,
+                                    }
+                                }
+                            },
+                            _ => {
+                                write!(self.output, "{}", text).map_err(|e| ParserError::ParseError(e.to_string()))?;
+                            }
+                        }
+                    }
+                },
+
+                Ok(Event::End(e)) => {
+                    match e.name().as_ref() {
+                        b"ve" => self.state = ParserState::Initial,
+                        b"w" => self.state = ParserState::InVerse,
+                        b"v" => self.state = ParserState::Initial,
+                        b"s" => self.state = ParserState::Initial,
+                        b"f" => self.state = ParserState::Initial,
+                        b"x" => self.state = ParserState::Initial,
+                        _ => (),
+                    }
+                },
+
+                Ok(Event::Empty(e)) => {
+                    if e.name() == quick_xml::name::QName(b"ve") {
+                        self.state = ParserState::Initial;
+                        writeln!(self.output).map_err(|e| ParserError::ParseError(e.to_string()))?;
+                    } else {
+                        for attr in e.attributes() {
+                            let attr = attr.map_err(|e| ParserError::ParseError(e.to_string()))?;
+                            let key = str::from_utf8(attr.key.as_ref())
+                                .map_err(|e| ParserError::ParseError(e.to_string()))?;
+                            
+                            if key == "bcv" {
+                                let value = str::from_utf8(attr.value.as_ref())
+                                    .map_err(|e| ParserError::ParseError(e.to_string()))?;
+                                
+                                let parts: Vec<&str> = value.split('.').collect();
+                                if parts.len() == 3 {
+                                    write!(self.output, "{}\t{}\t{}\t", parts[0], parts[1], parts[2])
+                                        .map_err(|e| ParserError::ParseError(e.to_string()))?;
+                                    start_verse = true;
+                                    in_content = true;
+                                }
+                            }
+                        }
+                    }
+                },
+
+                Ok(Event::Eof) => break,
+                _ => (),
+            }
+            self.buffer.clear();
+        }
+        Ok(())
+    }
+}
+
+fn main() -> Result<(), ParserError> {
+    let config = UsfxConfigBuilder::new()
+        .debug_output(true)
+        .build();
+    let output = Box::new(std::io::stdout());
+    let mut parser = UsfxParser::new("./xml/source.xml", output, config)?;
+    parser.parse()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn test_basic_parsing() {
+        let input = r#"<?xml version="1.0" encoding="UTF-8"?>
+            <usfx>
+                <v bcv="1.1.1">In the beginning</v>
+                <ve/>
+            </usfx>"#;
+        
+        let mut output = Vec::new();
+        let config = UsfxConfig::default();
+        let mut parser = UsfxParser::new(
+            Cursor::new(input.as_bytes()),
+            Box::new(Cursor::new(&mut output)),
+            config,
+        ).unwrap();
+        
+        parser.parse().unwrap();
+        let result = String::from_utf8(output).unwrap();
+        assert!(result.contains("1\t1\t1\t"));
     }
 }

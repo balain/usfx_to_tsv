@@ -87,8 +87,9 @@ pub enum ParserError {
     ParseError(String),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 enum ParserState {
+    Book,
     Initial,
     InVerse,
     InWord,
@@ -139,8 +140,8 @@ impl UsfxParser {
     /// # Returns
     /// * `Result<(), ParserError>` - Success or error
     pub fn parse(&mut self) -> Result<(), ParserError> {
-        let mut start_verse = false;
         let mut in_content = false;
+        let mut last_state = ParserState::Initial;
 
         loop {
             match self.reader.read_event_into(&mut self.buffer) {
@@ -148,8 +149,13 @@ impl UsfxParser {
                 
                 Ok(Event::Start(e)) => {
                     match e.name().as_ref() {
+                        b"book" => self.state = ParserState::Book,
                         b"ve" => self.state = ParserState::VerseEnd,
-                        b"w" => self.state = ParserState::InWord,
+                        b"w" => {
+                            // Ignore words outside of paragraphs
+
+                            self.state = ParserState::InWord
+                        },
                         b"v" => self.state = ParserState::InVerse,
                         b"s" => self.state = ParserState::InSection,
                         b"f" => self.state = ParserState::InFootnote,
@@ -159,7 +165,7 @@ impl UsfxParser {
                 },
 
                 Ok(Event::Text(e)) => {
-                    if in_content && self.state != ParserState::InFootnote && self.state != ParserState::InCrossReference {
+                    if in_content && self.state != ParserState::InFootnote && self.state != ParserState::InCrossReference && self.state != ParserState::InSection && self.state != ParserState::Book {
                         let text = e.unescape()
                             .map_err(|e| ParserError::ParseError(format!("Failed to unescape text: {}", e)))?
                             .into_owned();
@@ -169,25 +175,27 @@ impl UsfxParser {
                         } else {
                             &text
                         };
+                        // write!(self.output, "[{:?}]", self.state).map_err(|e| ParserError::ParseError(e.to_string()))?;
                         
                         match self.state {
                             ParserState::InVerse => {
-                                if start_verse {
-                                    write!(self.output, " ").map_err(|e| ParserError::ParseError(e.to_string()))?;
-                                }
-                                if self.state == ParserState::InWord {
-                                    write!(self.output, ">{}", text).map_err(|e| ParserError::ParseError(e.to_string()))?;
-                                } else {
                                     match text {
-                                        "\n" => write!(self.output, "").map_err(|e| ParserError::ParseError(e.to_string()))?,
+                                        "\n" => write!(self.output, "^").map_err(|e| ParserError::ParseError(e.to_string()))?,
                                         _ => write!(self.output, "{}", text).map_err(|e| ParserError::ParseError(e.to_string()))?,
                                     }
+                            },
+                            ParserState::InWord => {
+                                match last_state {
+                                    ParserState::Initial => write!(self.output, "{}", text).map_err(|e| ParserError::ParseError(e.to_string()))?,
+                                    ParserState::InWord => /* no op */ (),
+                                    _ => write!(self.output, " {}", text).map_err(|e| ParserError::ParseError(e.to_string()))?,
                                 }
                             },
                             _ => {
-                                write!(self.output, "{}", text).map_err(|e| ParserError::ParseError(e.to_string()))?;
+                                // write!(self.output, "{}", text).map_err(|e| ParserError::ParseError(e.to_string()))?;
                             }
                         }
+                        last_state = self.state.clone();
                     }
                 },
 
@@ -195,7 +203,7 @@ impl UsfxParser {
                     match e.name().as_ref() {
                         b"ve" => self.state = ParserState::Initial,
                         b"w" => self.state = ParserState::InVerse,
-                        b"v" => self.state = ParserState::Initial,
+                        b"v" => self.state = ParserState::InVerse,
                         b"s" => self.state = ParserState::Initial,
                         b"f" => self.state = ParserState::Initial,
                         b"x" => self.state = ParserState::Initial,
@@ -207,7 +215,7 @@ impl UsfxParser {
                     if e.name() == quick_xml::name::QName(b"ve") {
                         self.state = ParserState::Initial;
                         writeln!(self.output).map_err(|e| ParserError::ParseError(e.to_string()))?;
-                    } else {
+                    } else if e.name() == quick_xml::name::QName(b"v") {
                         for attr in e.attributes() {
                             let attr = attr.map_err(|e| ParserError::ParseError(e.to_string()))?;
                             let key = str::from_utf8(attr.key.as_ref())
@@ -221,11 +229,11 @@ impl UsfxParser {
                                 if parts.len() == 3 {
                                     write!(self.output, "{}\t{}\t{}\t", parts[0], parts[1], parts[2])
                                         .map_err(|e| ParserError::ParseError(e.to_string()))?;
-                                    start_verse = true;
                                     in_content = true;
                                 }
                             }
                         }
+                    
                     }
                 },
 
@@ -243,7 +251,7 @@ fn main() -> Result<(), ParserError> {
         .debug_output(true)
         .build();
     let output = Box::new(std::io::stdout());
-    let mut parser = UsfxParser::new("./xml/source.xml", output, config)?;
+    let mut parser = UsfxParser::new("./xml/test2.xml", output, config)?;
     parser.parse()
 }
 

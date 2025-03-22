@@ -153,11 +153,19 @@ impl UsfxParser {
                         b"ve" => self.state = ParserState::VerseEnd,
                         b"w" => {
                             // Ignore words outside of paragraphs
-
-                            self.state = ParserState::InWord
+                            if in_content {
+                                self.state = ParserState::InWord
+                            }
                         },
-                        b"v" => self.state = ParserState::InVerse,
-                        b"s" => self.state = ParserState::InSection,
+                        b"v" => {
+                            if in_content {
+                                self.state = ParserState::InVerse
+                            }
+                        },
+                        b"s" => {
+                            self.state = ParserState::InSection;
+                            in_content = false;
+                        },
                         b"f" => self.state = ParserState::InFootnote,
                         b"x" => self.state = ParserState::InCrossReference,
                         _ => (),
@@ -195,8 +203,9 @@ impl UsfxParser {
                                 // write!(self.output, "{}", text).map_err(|e| ParserError::ParseError(e.to_string()))?;
                             }
                         }
-                        last_state = self.state.clone();
                     }
+                    last_state = self.state.clone();
+
                 },
 
                 Ok(Event::End(e)) => {
@@ -251,7 +260,7 @@ fn main() -> Result<(), ParserError> {
         .debug_output(true)
         .build();
     let output = Box::new(std::io::stdout());
-    let mut parser = UsfxParser::new("./xml/test2.xml", output, config)?;
+    let mut parser = UsfxParser::new("./xml/source.xml", output, config)?;
     parser.parse()
 }
 

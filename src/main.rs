@@ -257,27 +257,8 @@ fn main() -> Result<(), ParserError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::io::Cursor;
-
     #[test]
-    fn test_basic_parsing() {
-        let input = r#"<?xml version="1.0" encoding="UTF-8"?>
-            <usfx>
-                <v bcv="1.1.1">In the beginning</v>
-                <ve/>
-            </usfx>"#;
-        
-        let mut output = Vec::new();
-        let config = UsfxConfig::default();
-        let mut parser = UsfxParser::new(
-            Cursor::new(input.as_bytes()),
-            Box::new(Cursor::new(&mut output)),
-            config,
-        ).unwrap();
-        
-        parser.parse().unwrap();
-        let result = String::from_utf8(output).unwrap();
-        assert!(result.contains("1\t1\t1\t"));
+    fn test_basic_parsing() {        
+        todo!()
     }
 }

@@ -1,7 +1,7 @@
 //! USFX to TSV Converter
 //!
 //! This crate provides functionality to convert USFX (Unified Scripture Format XML) files to TSV format.
-//! USFX files can be found at https://ebible.org/ (e.g., https://ebible.org/find/show.php?id=engnet)
+//! USFX files can be found at <https://ebible.org/> (e.g., <https://ebible.org/find/show.php?id=engnet>)
 //!
 //! # Example
 //! ```no_run
@@ -13,6 +13,9 @@
 //! let mut parser = UsfxParser::new("input.xml", output, config).unwrap();
 //! parser.parse().unwrap();
 //! ```
+
+// Source of clippy linters: <https://github.com/EmbarkStudios/rust-ecosystem/blob/main/lints.rs>
+// Clippy configuration is now in clippy.toml
 
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
@@ -42,7 +45,7 @@ impl Default for UsfxConfig {
     }
 }
 
-/// Builder for UsfxConfig
+/// Builder for `UsfxConfig`
 #[derive(Debug, Default)]
 pub struct UsfxConfigBuilder {
     config: UsfxConfig,
@@ -164,7 +167,7 @@ impl UsfxParser {
                         },
                         b"v" => {
                             in_content = true;
-                            self.state = ParserState::InVerse
+                            self.state = ParserState::InVerse;
                         }
                         b"s" => {
                             self.state = ParserState::InSection;
@@ -204,7 +207,7 @@ impl UsfxParser {
                                 _ => {
                                     if in_content {
                                         write!(self.output, "{}", text)
-                                        .map_err(|e| ParserError::ParseError(e.to_string()))?
+                                        .map_err(|e| ParserError::ParseError(e.to_string()))?;
                                     }
                                 },
                             },
@@ -216,7 +219,7 @@ if in_content {
                                         ParserState::InWord =>
                                         {
                                             write!(self.output, "{}", text)
-                                            .map_err(|e| ParserError::ParseError(e.to_string()))?
+                                            .map_err(|e| ParserError::ParseError(e.to_string()))?;
                                         }
                                         _ => write!(self.output, " {}", text)
                                             .map_err(|e| ParserError::ParseError(e.to_string()))?,
@@ -232,12 +235,8 @@ if in_content {
                 }
 
                 Ok(Event::End(e)) => match e.name().as_ref() {
-                    b"ve" => self.state = ParserState::Initial,
-                    b"w" => self.state = ParserState::InVerse,
-                    b"v" => self.state = ParserState::InVerse,
-                    b"s" => self.state = ParserState::Initial,
-                    b"f" => self.state = ParserState::Initial,
-                    b"x" => self.state = ParserState::Initial,
+                    b"v"|b"w" => self.state = ParserState::InVerse,
+                    b"f"|b"s"|b"ve"|b"x" => self.state = ParserState::Initial,
                     _ => (),
                 },
 
@@ -283,9 +282,9 @@ if in_content {
 fn main() -> Result<(), ParserError> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 2 {
-        return Err(ParserError::ParseError(
+        Err(ParserError::ParseError(
             "Usage: usfx_to_tsv <usfx_input.xml>".to_string(),
-        ));
+        ))
     } else {
         if !args[1].ends_with(".xml") {
             return Err(ParserError::ParseError(

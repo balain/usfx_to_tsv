@@ -6,3 +6,5 @@ xml/*.xml
 /**/*.txt
 /**/*.db
 .DS_Store
+
+/**/*.svg
